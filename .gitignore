@@ -49,3 +49,7 @@ htmlcov/
 .gemini/
 .antigravity/
 .system_generated/
+
+# Windows-specific files (ocultar archivos de sistema de Windows)
+Thumbs.db
+desktop.inis
