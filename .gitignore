@@ -43,3 +43,9 @@ logs/
 .coverage
 htmlcov/
 .tox/
+
+# AI Agent folders
+.claude/
+.gemini/
+.antigravity/
+.system_generated/
