@@ -1,0 +1,22 @@
+# Entorno RAG local con CUDA en Windows AMD/NVIDIA
+# PyTorch con soporte CUDA 12.8
+--index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128
+torchaudio==2.11.0+cu128
+
+# API y Servidor
+fastapi==0.136.3
+uvicorn==0.48.0
+
+# Base de datos vectorial, Embeddings y Procesamiento de Texto
+qdrant-client==1.18.0
+sentence-transformers==5.5.1
+langchain-text-splitters==1.1.2
+
+# Utilidades y Soporte
+pydantic==2.13.4
+python-dotenv==1.2.2
+requests==2.34.2
+numpy==2.4.4
+tqdm==4.67.3
