@@ -8,9 +8,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
+import unicodedata
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 from tqdm import tqdm
 
@@ -28,11 +30,14 @@ except ImportError:  # pragma: no cover - fallback
 
 def _build_splitter(chunk_size: int, chunk_overlap: int):
     if _HAS_LANGCHAIN:
+        # Separadores conservadores: solo párrafos, líneas y palabras. NO
+        # cortamos por frase (". ", "! ", "? ") ni por coma/punto-y-coma para
+        # evitar microchunks en páginas con listas o cabeceras cortas.
         return RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             length_function=len,
-            separators=["\n\n", "\n", ". ", "! ", "? ", "; ", ", ", " ", ""],
+            separators=["\n\n", "\n", " ", ""],
         )
     return None
 
@@ -108,13 +113,45 @@ def _payload_for(doc: Document) -> dict:
     }
 
 
+def _normalize(s: Optional[str]) -> str:
+    """Minúsculas + plegado de acentos (NFKD), para comparar URL y título."""
+    if not s:
+        return ""
+    s = s.lower()
+    s = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in s if not unicodedata.combining(c))
+
+
+def is_noisy(url: Optional[str], title: Optional[str], patterns: List[str]) -> Optional[str]:
+    """Devuelve el patrón que ha hecho match o None si el doc no parece ruido.
+
+    Usa límites de palabra (\\b) en regex, así "politica" matchea
+    "/politica-de-privacidad/" o "Política de cookies" pero NO "apolitical".
+    """
+    haystack = f"{_normalize(url)} {_normalize(title)}"
+    for pat in patterns:
+        norm_pat = _normalize(pat)
+        if not norm_pat:
+            continue
+        if re.search(rf"\b{re.escape(norm_pat)}\b", haystack):
+            return pat
+    return None
+
+
+def _useful_chars(text: str) -> int:
+    """Cuenta caracteres no-whitespace para descartar chunks que parecen llenos
+    pero son en su mayoría espacios/saltos de línea."""
+    return sum(1 for ch in text if not ch.isspace())
+
+
 def chunk_document(doc: Document, chunk_size: int, chunk_overlap: int) -> Iterable[Chunk]:
     pieces = split_text(doc.text, chunk_size, chunk_overlap)
     base_payload = _payload_for(doc)
-    for i, piece in enumerate(pieces):
-        if len(piece) < config.MIN_CHUNK_CHARS:
+    out_index = 0
+    for piece in pieces:
+        if _useful_chars(piece) < config.MIN_CHUNK_CHARS:
             continue
-        cid = _chunk_id(doc.source_id, i, piece)
+        cid = _chunk_id(doc.source_id, out_index, piece)
         payload = dict(base_payload)
         payload["chunk_id"] = cid
         yield Chunk(
@@ -123,6 +160,7 @@ def chunk_document(doc: Document, chunk_size: int, chunk_overlap: int) -> Iterab
             text=piece,
             metadata=payload,
         )
+        out_index += 1
 
 
 def build_chunks(
@@ -130,9 +168,16 @@ def build_chunks(
     output_path: Path,
     chunk_size: int,
     chunk_overlap: int,
+    max_doc_chars: int,
+    *,
+    include_noisy: bool = False,
+    noise_patterns: Optional[List[str]] = None,
 ) -> dict:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    docs_ok = docs_skipped = chunks_total = 0
+    docs_ok = docs_skipped = docs_oversized = docs_noisy = chunks_total = 0
+    oversized_examples: list[str] = []
+    noisy_examples: list[str] = []
+    patterns = noise_patterns if noise_patterns is not None else config.NOISE_PATTERNS
 
     entries = list(iter_corpus_entries(corpus_dir))
     with output_path.open("w", encoding="utf-8") as out:
@@ -141,6 +186,22 @@ def build_chunks(
             if doc is None:
                 docs_skipped += 1
                 continue
+            if len(doc.text) > max_doc_chars:
+                docs_oversized += 1
+                if len(oversized_examples) < 10:
+                    oversized_examples.append(
+                        f"{entry.txt_path.name} ({len(doc.text):,} chars)"
+                    )
+                continue
+            if not include_noisy:
+                matched = is_noisy(doc.page_metadata.url, doc.page_metadata.title, patterns)
+                if matched:
+                    docs_noisy += 1
+                    if len(noisy_examples) < 10:
+                        noisy_examples.append(
+                            f"[{matched}] {doc.page_metadata.url or doc.page_metadata.title or entry.txt_path.name}"
+                        )
+                    continue
             docs_ok += 1
             for chunk in chunk_document(doc, chunk_size, chunk_overlap):
                 out.write(
@@ -150,10 +211,20 @@ def build_chunks(
 
     return {
         "docs_processed": docs_ok,
-        "docs_skipped": docs_skipped,
+        "docs_skipped_invalid": docs_skipped,
+        "docs_skipped_oversized": docs_oversized,
+        "docs_skipped_noisy": docs_noisy,
+        "oversized_examples": oversized_examples,
+        "noisy_examples": noisy_examples,
+        "noise_patterns": patterns,
+        "noise_filter_enabled": not include_noisy,
         "chunks_written": chunks_total,
         "output": str(output_path),
         "splitter": "langchain.RecursiveCharacterTextSplitter" if _HAS_LANGCHAIN else "builtin",
+        "chunk_size": chunk_size,
+        "chunk_overlap": chunk_overlap,
+        "max_doc_chars": max_doc_chars,
+        "min_chunk_chars": config.MIN_CHUNK_CHARS,
     }
 
 
@@ -163,6 +234,17 @@ def main() -> None:
     parser.add_argument("--output", default=str(config.CHUNKS_FILE))
     parser.add_argument("--chunk-size", type=int, default=config.CHUNK_SIZE)
     parser.add_argument("--chunk-overlap", type=int, default=config.CHUNK_OVERLAP)
+    parser.add_argument(
+        "--max-doc-chars",
+        type=int,
+        default=config.MAX_DOC_CHARS,
+        help="Skip documentos con más caracteres (probable binario mal interpretado).",
+    )
+    parser.add_argument(
+        "--include-noisy",
+        action="store_true",
+        help="Indexar también páginas de aviso legal, cookies, login, tags, feed, etc.",
+    )
     args = parser.parse_args()
 
     corpus = Path(args.corpus)
@@ -170,7 +252,14 @@ def main() -> None:
         print(f"ERROR: corpus not found: {corpus}", file=sys.stderr)
         sys.exit(2)
 
-    stats = build_chunks(corpus, Path(args.output), args.chunk_size, args.chunk_overlap)
+    stats = build_chunks(
+        corpus,
+        Path(args.output),
+        args.chunk_size,
+        args.chunk_overlap,
+        args.max_doc_chars,
+        include_noisy=args.include_noisy,
+    )
     print(json.dumps(stats, indent=2, ensure_ascii=False))
 
 

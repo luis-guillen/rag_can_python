@@ -50,14 +50,33 @@ E5_QUERY_PREFIX = _env_str("RAG_E5_QUERY_PREFIX", "query: ")
 E5_PASSAGE_PREFIX = _env_str("RAG_E5_PASSAGE_PREFIX", "passage: ")
 
 # --- Chunking --------------------------------------------------------------
-CHUNK_SIZE = _env_int("RAG_CHUNK_SIZE", 1200)
-CHUNK_OVERLAP = _env_int("RAG_CHUNK_OVERLAP", 180)
-MIN_CHUNK_CHARS = _env_int("RAG_MIN_CHUNK_CHARS", 80)
+CHUNK_SIZE = _env_int("RAG_CHUNK_SIZE", 2200)
+CHUNK_OVERLAP = _env_int("RAG_CHUNK_OVERLAP", 250)
+MIN_CHUNK_CHARS = _env_int("RAG_MIN_CHUNK_CHARS", 150)
+# Skip documentos sospechosamente grandes (típicamente PDFs/JPGs leídos como
+# texto por el crawler). 500K caracteres ≈ ~150 páginas reales: cualquier
+# página HTML legítima cabe holgado, los binarios mal interpretados no.
+MAX_DOC_CHARS = _env_int("RAG_MAX_DOC_CHARS", 500_000)
 
 # --- Retrieval / API -------------------------------------------------------
 TOP_K_DEFAULT = _env_int("RAG_TOP_K", 5)
 TOP_K_MAX = _env_int("RAG_TOP_K_MAX", 20)
 ANSWER_PREVIEW_CHARS = _env_int("RAG_ANSWER_PREVIEW_CHARS", 350)
+
+# --- Filtros de ruido ------------------------------------------------------
+# Páginas administrativas/legales/búsqueda que normalmente no aportan
+# contenido informativo y conviene NO indexar. Se comparan contra `url` y
+# `title` con plegado de acentos y límites de palabra.
+DEFAULT_NOISE_PATTERNS = (
+    "aviso-legal,aviso legal,politica,privacidad,cookies,"
+    "login,buscar,search,tags,feed,rss"
+)
+NOISE_PATTERNS = [
+    p.strip()
+    for p in _env_str("RAG_NOISE_PATTERNS", DEFAULT_NOISE_PATTERNS).split(",")
+    if p.strip()
+]
+
 
 # --- CORS para Chat.aspx ---------------------------------------------------
 # IIS Express / ASP.NET típicamente sirven en localhost con un puerto dinámico.
