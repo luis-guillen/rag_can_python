@@ -63,6 +63,42 @@ TOP_K_DEFAULT = _env_int("RAG_TOP_K", 5)
 TOP_K_MAX = _env_int("RAG_TOP_K_MAX", 20)
 ANSWER_PREVIEW_CHARS = _env_int("RAG_ANSWER_PREVIEW_CHARS", 350)
 
+# --- Alias de fuentes ------------------------------------------------------
+# Mapeo "menciona-esto-en-la-pregunta" -> domain real. Si el usuario escribe
+# "¿Qué dice Memoria de Lanzarote sobre...?" priorizamos resultados de ese
+# dominio en la búsqueda. Configurable vía RAG_SOURCE_ALIASES con formato:
+#   "alias1=domain1;alias2=domain2;..."
+DEFAULT_SOURCE_ALIASES_RAW = (
+    "canarias azul=canarias-azul.iatext.ulpgc.es;"
+    "iatext=canarias-azul.iatext.ulpgc.es;"
+    "memoria de lanzarote=memoriadelanzarote.com;"
+    "museo canario=elmuseocanario.com;"
+    "el museo canario=elmuseocanario.com;"
+    "academia canaria de la lengua=www.academiacanarialengua.org;"
+    "academia canaria=www.academiacanarialengua.org;"
+    "cultura gran canaria=cultura.grancanaria.com;"
+    "cultura de gran canaria=cultura.grancanaria.com;"
+    "izuran=izuran.blogspot.com"
+)
+
+
+def _parse_aliases(raw: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for entry in raw.split(";"):
+        entry = entry.strip()
+        if not entry or "=" not in entry:
+            continue
+        alias, domain = entry.split("=", 1)
+        alias = alias.strip().lower()
+        domain = domain.strip()
+        if alias and domain:
+            out[alias] = domain
+    return out
+
+
+SOURCE_ALIASES = _parse_aliases(_env_str("RAG_SOURCE_ALIASES", DEFAULT_SOURCE_ALIASES_RAW))
+
+
 # --- Filtros de ruido ------------------------------------------------------
 # Páginas administrativas/legales/búsqueda que normalmente no aportan
 # contenido informativo y conviene NO indexar. Se comparan contra `url` y

@@ -80,6 +80,10 @@ class Source(BaseModel):
     domain: Optional[str] = None
     source_name: Optional[str] = None
     text_preview: str
+    # True cuando el resultado proviene del fallback global (la búsqueda
+    # filtrada por dominio detectado no llenó top_k). En filtro duro
+    # (--domain) este flag nunca debe aparecer porque no hay fallback.
+    is_fallback: bool = False
 
 
 class QueryResponse(BaseModel):
